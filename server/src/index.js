@@ -5,6 +5,7 @@ import multer from 'multer';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { processDocument } from './documentProcessor.js';
+import fs from 'fs';
 
 dotenv.config();
 
@@ -19,22 +20,26 @@ const storage = multer.diskStorage({
     cb(null, path.join(__dirname, '../uploads/'));
   },
   filename: function (req, file, cb) {
-    cb(null, Date.now() + '-' + file.originalname);
+    // Generate a unique filename with original extension
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, uniqueSuffix + path.extname(file.originalname));
   }
 });
 
-const upload = multer({ 
+const fileFilter = (req, file, cb) => {
+  const allowedTypes = ['image/jpeg', 'image/png', 'application/pdf'];
+  if (allowedTypes.includes(file.mimetype)) {
+    cb(null, true);
+  } else {
+    cb(new Error('Invalid file type. Only JPEG, PNG, and PDF files are allowed.'));
+  }
+};
+
+const upload = multer({
   storage: storage,
+  fileFilter: fileFilter,
   limits: {
     fileSize: 5 * 1024 * 1024 // 5MB limit
-  },
-  fileFilter: (req, file, cb) => {
-    const allowedTypes = ['image/jpeg', 'image/png', 'image/jpg', 'application/pdf'];
-    if (allowedTypes.includes(file.mimetype)) {
-      cb(null, true);
-    } else {
-      cb(new Error('Invalid file type. Only JPEG, PNG, and PDF files are allowed.'));
-    }
   }
 });
 
@@ -53,16 +58,24 @@ app.post('/api/upload', upload.single('document'), async (req, res) => {
       return res.status(400).json({ error: 'No file uploaded' });
     }
 
+    console.log('Processing file:', req.file.path);
     const result = await processDocument(req.file.path);
+
+    // Clean up the uploaded file after processing
+    try {
+      await fs.promises.unlink(req.file.path);
+    } catch (unlinkError) {
+      console.error('Error deleting file:', unlinkError);
+      // Continue with the response even if file deletion fails
+    }
 
     res.json({
       message: 'Document processed successfully',
-      filename: req.file.filename,
       ...result
     });
   } catch (error) {
     console.error('Error processing document:', error);
-    res.status(500).json({ error: 'Error processing document' });
+    res.status(500).json({ error: error.message || 'Error processing document' });
   }
 });
 
@@ -81,4 +94,4 @@ app.use((err, req, res, next) => {
 
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
-}); 
+});
